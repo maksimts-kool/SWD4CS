@@ -52,18 +52,18 @@ namespace SWD4CS
         // ********************************************************************************************
         private static string Create_Code_Instance(string source, string space)
         {
-            // Instance
-            for (int i = 0; i < fileInfo.source_base.Count; i++) { source += fileInfo.source_base[i] + Environment.NewLine; }
+            for (int i = 0; i < fileInfo.source_base.Count; i++)
+                source += fileInfo.source_base[i] + Environment.NewLine;
+
             source += space + "{" + Environment.NewLine;
             return source;
         }
 
         private static string Create_Code_Suspend_Resume(string source, List<string> lstSuspend, List<string> lstResume, string space)
         {
-            string[] className_group1 = new string[] { "DataGridView", "PictureBox", "SplitContainer", "TrackBar" };
-            string[] className_group2 = new string[] { "GroupBox", "Panel", "StatusStrip", "TabControl", "TabPage", "FlowLayoutPanel", "TableLayoutPanel" };
+            string[] className_group1 = { "DataGridView", "PictureBox", "SplitContainer", "TrackBar" };
+            string[] className_group2 = { "GroupBox", "Panel", "StatusStrip", "TabControl", "TabPage", "FlowLayoutPanel", "TableLayoutPanel" };
 
-            // Suspend & resume
             foreach (var item in userForm!.CtrlItems)
             {
                 source += $"{space}    this.{item.ctrl!.Name} = new System.Windows.Forms.{item.className}();{Environment.NewLine}";
@@ -114,6 +114,7 @@ namespace SWD4CS
                         Get_Code_Property(ref source, ref memCode, item, userForm.CtrlItems[i], space);
                     }
                 }
+
                 if (memCode != "") { source += memCode; }
                 source = Create_Code_EventsDec(source, space, userForm.CtrlItems[i]);
             }
@@ -122,18 +123,31 @@ namespace SWD4CS
 
         private static string Create_Code_FormProperty(string source, string space)
         {
-            // form-property
             source += $"{space} //{Environment.NewLine}" +
                       $"{space} // form{Environment.NewLine}" +
                       $"{space} //{Environment.NewLine}";
 
             Type formType = typeof(Form);
-            var formProperties = userForm!.GetType().GetProperties().Where(prop => !IsReadOnlyProperty(prop) && HideProperty(prop.Name));
+            var formProperties = userForm!.GetType()
+                .GetProperties()
+                .Where(prop => !IsReadOnlyProperty(prop) && HideProperty(prop.Name));
 
             foreach (PropertyInfo item in formProperties)
             {
-                object? userFormValue = item.GetValue(userForm);
-                object? baseFormValue = item.GetValue(new Form());
+                if (item.GetIndexParameters().Length > 0) continue; // skip indexed
+
+                object? userFormValue;
+                object? baseFormValue;
+
+                try
+                {
+                    userFormValue = item.GetValue(userForm, null);
+                    baseFormValue = item.GetValue(new Form(), null);
+                }
+                catch
+                {
+                    continue;
+                }
 
                 if (userFormValue != null && baseFormValue != null && userFormValue.ToString() != baseFormValue.ToString())
                 {
@@ -158,7 +172,6 @@ namespace SWD4CS
 
         private static string Create_Code_FormAddControl(string source, string space)
         {
-            // AddControl
             foreach (var ctrlItem in userForm!.CtrlItems.Where(i => i.ctrl!.Parent == userForm))
             {
                 source += $"{space}    this.Controls.Add(this.{ctrlItem.ctrl!.Name});{Environment.NewLine}";
@@ -173,7 +186,6 @@ namespace SWD4CS
                       $"{space}#endregion {Environment.NewLine}" +
                       $"{Environment.NewLine}";
 
-            // declaration
             foreach (var ctrlItem in userForm!.CtrlItems)
             {
                 Type type = ctrlItem.nonCtrl!.GetType();
@@ -187,7 +199,6 @@ namespace SWD4CS
 
         private static string Create_Code_FuncDeclaration(string source)
         {
-            // control
             for (int i = 0; i < userForm!.CtrlItems.Count; i++)
             {
                 for (int j = 0; j < userForm.CtrlItems[i].decFunc.Count; j++)
@@ -200,7 +211,6 @@ namespace SWD4CS
                 }
             }
 
-            // form
             foreach (string decFunc in userForm.decFunc)
             {
                 source += $"// {decFunc}{Environment.NewLine}" +
@@ -214,7 +224,6 @@ namespace SWD4CS
 
         private static string Create_Code_AddControl(string source, string space, int i)
         {
-            // AddControl
             Control ctrl1 = userForm!.CtrlItems[i].ctrl!;
 
             for (int j = 0; j < userForm.CtrlItems.Count; j++)
@@ -240,23 +249,45 @@ namespace SWD4CS
             return source;
         }
 
+        // FIXED METHOD ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
         private static void Get_Code_Property(ref string source, ref string memCode, PropertyInfo item, cls_controls ctrlItems, string space)
         {
+            // Skip indexed properties
+            if (item.GetIndexParameters().Length > 0) return;
+
             Component? comp = (ctrlItems.nonCtrl!.GetType() == typeof(Component)) ? ctrlItems.ctrl : ctrlItems.nonCtrl;
             Component? baseCtrl = GetBaseCtrl(ctrlItems);
 
-            if (item.GetValue(comp) == null || item.GetValue(baseCtrl) == null) { return; }
-            if (item.GetValue(comp)!.ToString() == item.GetValue(baseCtrl)!.ToString()) { return; }
+            object? compValue = null;
+            object? baseValue = null;
+
+            try
+            {
+                compValue = item.GetValue(comp, null);
+                baseValue = item.GetValue(baseCtrl, null);
+            }
+            catch (TargetParameterCountException)
+            {
+                return;
+            }
+            catch
+            {
+                return;
+            }
+
+            if (compValue == null || baseValue == null) return;
+            if (compValue!.ToString() == baseValue!.ToString()) return;
 
             string str1 = space + "    this." + ctrlItems.ctrl!.Name + "." + item.Name;
             string strProperty = Property2String(comp!, item);
 
-            if (strProperty == "") { return; }
+            if (string.IsNullOrEmpty(strProperty)) return;
 
             bool flag = item.Name != "SplitterDistance" && item.Name != "Anchor";
-            if (flag) { source += str1 + strProperty + Environment.NewLine; }
-            else { memCode += str1 + strProperty + Environment.NewLine; }
+            if (flag) source += str1 + strProperty + Environment.NewLine;
+            else memCode += str1 + strProperty + Environment.NewLine;
         }
+        // FIXED METHOD END ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
 
         private static string Create_Code_EventsDec(string source, string space, cls_controls cls_ctrl)
         {
@@ -269,7 +300,8 @@ namespace SWD4CS
         private static string Create_Code_FormEventsDec(string source, string space, cls_userform userForm)
         {
             int cnt = userForm.decHandler.Count;
-            for (int i = 0; i < cnt; i++) { source += space + "    " + userForm.decHandler[i] + Environment.NewLine; }
+            for (int i = 0; i < cnt; i++)
+                source += space + "    " + userForm.decHandler[i] + Environment.NewLine;
             return source;
         }
 
